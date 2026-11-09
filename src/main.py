@@ -57,6 +57,18 @@ def parse_index(text):
     return packages
 
 
+def load_test_graph(path):
+    graph = {}
+    with open(path, encoding="utf-8") as file:
+        for line in file:
+            line = line.strip()
+            if not line or ":" not in line:
+                continue
+            name, rest = line.split(":", 1)
+            graph[name.strip()] = rest.split()
+    return graph
+
+
 def clean_dep(item):
     if item.startswith("!") or ":" in item:
         return None
@@ -65,13 +77,37 @@ def clean_dep(item):
     return item
 
 
-def get_direct_deps(packages, name):
+def get_direct_deps(graph, name, substring):
     result = []
-    for item in packages[name]:
+    for item in graph.get(name, []):
         dep = clean_dep(item)
-        if dep:
+        if dep and (not substring or substring not in dep):
             result.append(dep)
     return result
+
+
+def build_full_graph(graph, start, substring):
+    """DFS без рекурсии: собирает все транзитивные зависимости."""
+    full = {}
+    stack = [start]
+    while stack:
+        name = stack.pop()
+        if name in full:
+            continue
+        deps = get_direct_deps(graph, name, substring)
+        full[name] = deps
+        for dep in deps:
+            if dep not in full:
+                stack.append(dep)
+    return full
+
+
+def print_list(full, start):
+    print(f"Все зависимости пакета {start}:")
+    for name in sorted(full):
+        print(name)
+        for dep in full[name]:
+            print(f"  -> {dep}")
 
 
 def main():
@@ -82,21 +118,17 @@ def main():
         sys.exit(1)
 
     if args.test:
-        print("Тестовый режим будет добавлен в этапе 3")
-        return
+        graph = load_test_graph(args.repo)
+    else:
+        text = download_index(args.repo)
+        graph = parse_index(text)
 
-    text = download_index(args.repo)
-    packages = parse_index(text)
-    if args.package not in packages:
+    if args.package not in graph:
         print(f"Ошибка: пакет не найден: {args.package}", file=sys.stderr)
         sys.exit(1)
 
-    deps = get_direct_deps(packages, args.package)
-    print(f"Прямые зависимости пакета {args.package}:")
-    if not deps:
-        print("нет зависимостей")
-    for dep in deps:
-        print(dep)
+    full = build_full_graph(graph, args.package, args.filter)
+    print_list(full, args.package)
 
 
 if __name__ == "__main__":
