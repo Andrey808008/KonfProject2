@@ -1,0 +1,19 @@
+## Дерево
+    python src/main.py --package A --repo tests/simple.txt --test --ascii
+
+## Обратные зависимости
+    python src/main.py --package D --repo tests/simple.txt --test --reverse
+
+## Фильтр
+    python src/main.py --package A --repo tests/simple.txt --test --filter C
+
+## Реальный пакет (нужен интернет)
+    python src/main.py --package curl --repo https://dl-cdn.alpinelinux.org/alpine/v3.19/main/x86_64/APKINDEX.tar.gz --ascii
+
+## Что значат опции
+- --package: имя пакета
+- --repo: адрес или путь к файлу
+- --test: --repo это файл
+- --ascii: дерево и картинка graph.svg
+- --reverse: кто зависит от пакета
+- --filter: пропустить пакеты с подстрокой
