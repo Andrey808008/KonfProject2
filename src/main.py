@@ -1,6 +1,9 @@
 import argparse
+import io
 import os
 import sys
+import tarfile
+import urllib.request
 
 
 def parse_args():
@@ -31,13 +34,44 @@ def check_args(args):
     return None
 
 
-def print_params(args):
-    print("Параметры запуска:")
-    print(f"package: {args.package}")
-    print(f"repo: {args.repo}")
-    print(f"test: {args.test}")
-    print(f"ascii: {args.ascii}")
-    print(f"filter: {args.filter}")
+def download_index(url):
+    with urllib.request.urlopen(url) as response:
+        data = response.read()
+    archive = tarfile.open(fileobj=io.BytesIO(data), mode="r:gz")
+    member = archive.extractfile("APKINDEX")
+    return member.read().decode("utf-8")
+
+
+def parse_index(text):
+    packages = {}
+    for block in text.strip().split("\n\n"):
+        name = None
+        deps = []
+        for line in block.splitlines():
+            if line.startswith("P:"):
+                name = line[2:]
+            elif line.startswith("D:"):
+                deps = line[2:].split()
+        if name and name not in packages:
+            packages[name] = deps
+    return packages
+
+
+def clean_dep(item):
+    if item.startswith("!") or ":" in item:
+        return None
+    for sign in ("<", ">", "=", "~"):
+        item = item.split(sign)[0]
+    return item
+
+
+def get_direct_deps(packages, name):
+    result = []
+    for item in packages[name]:
+        dep = clean_dep(item)
+        if dep:
+            result.append(dep)
+    return result
 
 
 def main():
@@ -46,7 +80,23 @@ def main():
     if error:
         print(f"Ошибка: {error}", file=sys.stderr)
         sys.exit(1)
-    print_params(args)
+
+    if args.test:
+        print("Тестовый режим будет добавлен в этапе 3")
+        return
+
+    text = download_index(args.repo)
+    packages = parse_index(text)
+    if args.package not in packages:
+        print(f"Ошибка: пакет не найден: {args.package}", file=sys.stderr)
+        sys.exit(1)
+
+    deps = get_direct_deps(packages, args.package)
+    print(f"Прямые зависимости пакета {args.package}:")
+    if not deps:
+        print("нет зависимостей")
+    for dep in deps:
+        print(dep)
 
 
 if __name__ == "__main__":
