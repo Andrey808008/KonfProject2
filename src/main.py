@@ -20,6 +20,8 @@ def parse_args():
                         help="Вывод зависимостей в виде ASCII-дерева")
     parser.add_argument("--filter", default="",
                         help="Подстрока: пакеты с ней в имени пропускаются")
+    parser.add_argument("--reverse", action="store_true",
+                        help="Показать обратные зависимости (кто зависит от пакета)")
     return parser.parse_args()
 
 
@@ -87,7 +89,7 @@ def get_direct_deps(graph, name, substring):
 
 
 def build_full_graph(graph, start, substring):
-    """DFS без рекурсии: собирает все транзитивные зависимости."""
+    """DFS без рекурсии: собирает все транзитивные связи."""
     full = {}
     stack = [start]
     while stack:
@@ -102,8 +104,26 @@ def build_full_graph(graph, start, substring):
     return full
 
 
-def print_list(full, start):
-    print(f"Все зависимости пакета {start}:")
+def build_reverse(graph, substring):
+    """Строит обратный граф: для каждого пакета список тех, кто от него зависит."""
+    reverse = {}
+    for name in graph:
+        if substring and substring in name:
+            continue
+        reverse.setdefault(name, [])
+    for name in graph:
+        if substring and substring in name:
+            continue
+        for dep in get_direct_deps(graph, name, substring):
+            reverse.setdefault(dep, []).append(name)
+    return reverse
+
+
+def print_list(full, start, reverse):
+    if reverse:
+        print(f"Обратные зависимости пакета {start}:")
+    else:
+        print(f"Все зависимости пакета {start}:")
     for name in sorted(full):
         print(name)
         for dep in full[name]:
@@ -127,8 +147,13 @@ def main():
         print(f"Ошибка: пакет не найден: {args.package}", file=sys.stderr)
         sys.exit(1)
 
-    full = build_full_graph(graph, args.package, args.filter)
-    print_list(full, args.package)
+    if args.reverse:
+        source = build_reverse(graph, args.filter)
+    else:
+        source = graph
+
+    full = build_full_graph(source, args.package, args.filter)
+    print_list(full, args.package, args.reverse)
 
 
 if __name__ == "__main__":
