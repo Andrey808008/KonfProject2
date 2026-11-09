@@ -1,0 +1,5 @@
+P:curl
+D:libcurl ca-certificates
+
+P:libcurl
+D:
