@@ -20,8 +20,10 @@ def parse_args():
                         help="Вывод зависимостей в виде ASCII-дерева")
     parser.add_argument("--filter", default="",
                         help="Подстрока: пакеты с ней в имени пропускаются")
-    parser.add_argument("--reverse", action="store_true",
-                        help="Показать обратные зависимости (кто зависит от пакета)")
+    parser.add_argument(
+        "--reverse", action="store_true",
+        help="Показать обратные зависимости",
+    )
     return parser.parse_args()
 
 
@@ -105,7 +107,7 @@ def build_full_graph(graph, start, substring):
 
 
 def build_reverse(graph, substring):
-    """Строит обратный граф: для каждого пакета список тех, кто от него зависит."""
+    """Обратный граф: от пакета к тем, кто от него зависит."""
     reverse = {}
     for name in graph:
         if substring and substring in name:
