@@ -1,3 +1,5 @@
    .venv/
    __pycache__/
    *.pyc
+   graph.d2
+   graph.svg

@@ -1,6 +1,7 @@
 import argparse
 import io
 import os
+import subprocess
 import sys
 import tarfile
 import urllib.request
@@ -22,6 +23,8 @@ def parse_args():
                         help="Подстрока: пакеты с ней в имени пропускаются")
     parser.add_argument("--reverse", action="store_true",
                         help="Показать обратные зависимости (кто зависит от пакета)")
+    parser.add_argument("--output", default="graph",
+                        help="Имя файлов для графа (без расширения)")
     return parser.parse_args()
 
 
@@ -130,6 +133,51 @@ def print_list(full, start, reverse):
             print(f"  -> {dep}")
 
 
+def print_ascii(full, start):
+    """Вывод дерева без рекурсии. Уже раскрытые пакеты не повторяются."""
+    print(start)
+    expanded = set()
+    stack = [(start, "", True, True)]
+    while stack:
+        name, prefix, is_last, is_root = stack.pop()
+        if not is_root:
+            connector = "└── " if is_last else "├── "
+            if name in expanded:
+                print(prefix + connector + name + " (уже выведен)")
+                continue
+            print(prefix + connector + name)
+        expanded.add(name)
+        child_prefix = prefix if is_root else prefix + ("    " if is_last else "│   ")
+        children = full.get(name, [])
+        for index in reversed(range(len(children))):
+            is_child_last = index == len(children) - 1
+            stack.append((children[index], child_prefix, is_child_last, False))
+
+
+def to_d2(full):
+    lines = []
+    for name in sorted(full):
+        lines.append(f'"{name}"')
+    for name in sorted(full):
+        for dep in full[name]:
+            lines.append(f'"{name}" -> "{dep}"')
+    return "\n".join(lines) + "\n"
+
+
+def render_svg(d2_path, svg_path):
+    try:
+        subprocess.run(["d2", d2_path, svg_path], check=True)
+    except FileNotFoundError:
+        print("Ошибка: программа d2 не найдена, проверьте установку", file=sys.stderr)
+        sys.exit(1)
+    except subprocess.CalledProcessError:
+        print("Ошибка: d2 не смогла построить изображение", file=sys.stderr)
+        sys.exit(1)
+    print(f"Изображение сохранено: {svg_path}")
+    if os.name == "nt":
+        os.startfile(svg_path)
+
+
 def main():
     args = parse_args()
     error = check_args(args)
@@ -154,6 +202,16 @@ def main():
 
     full = build_full_graph(source, args.package, args.filter)
     print_list(full, args.package, args.reverse)
+
+    if args.ascii:
+        print()
+        print_ascii(full, args.package)
+
+    d2_path = args.output + ".d2"
+    svg_path = args.output + ".svg"
+    with open(d2_path, "w", encoding="utf-8") as file:
+        file.write(to_d2(full))
+    render_svg(d2_path, svg_path)
 
 
 if __name__ == "__main__":
