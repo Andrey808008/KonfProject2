@@ -11,20 +11,34 @@ def parse_args():
     parser = argparse.ArgumentParser(
         description="Визуализатор графа зависимостей пакетов apk"
     )
-    parser.add_argument("--package", required=True,
-                        help="Имя анализируемого пакета")
-    parser.add_argument("--repo", required=True,
-                        help="URL репозитория или путь к тестовому файлу")
-    parser.add_argument("--test", action="store_true",
-                        help="Режим тестирования: --repo это путь к файлу")
-    parser.add_argument("--ascii", action="store_true",
-                        help="Вывод зависимостей в виде ASCII-дерева")
-    parser.add_argument("--filter", default="",
-                        help="Подстрока: пакеты с ней в имени пропускаются")
-    parser.add_argument("--reverse", action="store_true",
-                        help="Показать обратные зависимости (кто зависит от пакета)")
-    parser.add_argument("--output", default="graph",
-                        help="Имя файлов для графа (без расширения)")
+    parser.add_argument(
+        "--package", required=True,
+        help="Имя анализируемого пакета",
+    )
+    parser.add_argument(
+        "--repo", required=True,
+        help="URL репозитория или путь к тестовому файлу",
+    )
+    parser.add_argument(
+        "--test", action="store_true",
+        help="Режим тестирования: --repo это путь к файлу",
+    )
+    parser.add_argument(
+        "--ascii", action="store_true",
+        help="Вывод зависимостей в виде ASCII-дерева",
+    )
+    parser.add_argument(
+        "--filter", default="",
+        help="Подстрока: пакеты с ней в имени пропускаются",
+    )
+    parser.add_argument(
+        "--reverse", action="store_true",
+        help="Показать обратные зависимости",
+    )
+    parser.add_argument(
+        "--output", default="graph",
+        help="Имя файлов для графа (без расширения)",
+    )
     return parser.parse_args()
 
 
@@ -108,15 +122,12 @@ def build_full_graph(graph, start, substring):
 
 
 def build_reverse(graph, substring):
-    """Строит обратный граф: для каждого пакета список тех, кто от него зависит."""
+    """Обратный граф: от пакета к тем, кто от него зависит."""
     reverse = {}
     for name in graph:
         if substring and substring in name:
             continue
         reverse.setdefault(name, [])
-    for name in graph:
-        if substring and substring in name:
-            continue
         for dep in get_direct_deps(graph, name, substring):
             reverse.setdefault(dep, []).append(name)
     return reverse
@@ -134,7 +145,7 @@ def print_list(full, start, reverse):
 
 
 def print_ascii(full, start):
-    """Вывод дерева без рекурсии. Уже раскрытые пакеты не повторяются."""
+    """Дерево без рекурсии. Уже раскрытые пакеты не повторяются."""
     print(start)
     expanded = set()
     stack = [(start, "", True, True)]
@@ -147,17 +158,20 @@ def print_ascii(full, start):
                 continue
             print(prefix + connector + name)
         expanded.add(name)
-        child_prefix = prefix if is_root else prefix + ("    " if is_last else "│   ")
+        if is_root:
+            child_prefix = prefix
+        else:
+            child_prefix = prefix + ("    " if is_last else "│   ")
         children = full.get(name, [])
         for index in reversed(range(len(children))):
             is_child_last = index == len(children) - 1
-            stack.append((children[index], child_prefix, is_child_last, False))
+            stack.append(
+                (children[index], child_prefix, is_child_last, False)
+            )
 
 
 def to_d2(full):
-    lines = []
-    for name in sorted(full):
-        lines.append(f'"{name}"')
+    lines = [f'"{name}"' for name in sorted(full)]
     for name in sorted(full):
         for dep in full[name]:
             lines.append(f'"{name}" -> "{dep}"')
@@ -168,10 +182,10 @@ def render_svg(d2_path, svg_path):
     try:
         subprocess.run(["d2", d2_path, svg_path], check=True)
     except FileNotFoundError:
-        print("Ошибка: программа d2 не найдена, проверьте установку", file=sys.stderr)
+        print("Ошибка: программа d2 не найдена", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError:
-        print("Ошибка: d2 не смогла построить изображение", file=sys.stderr)
+        print("Ошибка: d2 не построила изображение", file=sys.stderr)
         sys.exit(1)
     print(f"Изображение сохранено: {svg_path}")
     if os.name == "nt":
@@ -188,18 +202,13 @@ def main():
     if args.test:
         graph = load_test_graph(args.repo)
     else:
-        text = download_index(args.repo)
-        graph = parse_index(text)
+        graph = parse_index(download_index(args.repo))
 
     if args.package not in graph:
         print(f"Ошибка: пакет не найден: {args.package}", file=sys.stderr)
         sys.exit(1)
 
-    if args.reverse:
-        source = build_reverse(graph, args.filter)
-    else:
-        source = graph
-
+    source = build_reverse(graph, args.filter) if args.reverse else graph
     full = build_full_graph(source, args.package, args.filter)
     print_list(full, args.package, args.reverse)
 
