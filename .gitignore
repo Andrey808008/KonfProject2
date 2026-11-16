@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 *.d2
 *.svg
+!docs/*.svg
