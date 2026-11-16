@@ -6,25 +6,41 @@ import sys
 import tarfile
 import urllib.request
 
+OPERATORS = ("<=", ">=", "<", ">", "=", "~")
+
 
 def parse_args():
     parser = argparse.ArgumentParser(
         description="Визуализатор графа зависимостей пакетов apk"
     )
-    parser.add_argument("--package", required=True,
-                        help="Имя анализируемого пакета")
-    parser.add_argument("--repo", required=True,
-                        help="URL репозитория или путь к тестовому файлу")
-    parser.add_argument("--test", action="store_true",
-                        help="Режим тестирования: --repo это путь к файлу")
-    parser.add_argument("--ascii", action="store_true",
-                        help="Вывод зависимостей в виде ASCII-дерева")
-    parser.add_argument("--filter", default="",
-                        help="Подстрока: пакеты с ней в имени пропускаются")
-    parser.add_argument("--reverse", action="store_true",
-                        help="Показать обратные зависимости (кто зависит от пакета)")
-    parser.add_argument("--output", default="graph",
-                        help="Имя файлов для графа (без расширения)")
+    parser.add_argument(
+        "--package", required=True,
+        help="Имя анализируемого пакета",
+    )
+    parser.add_argument(
+        "--repo", required=True,
+        help="URL репозитория или путь к тестовому файлу",
+    )
+    parser.add_argument(
+        "--test", action="store_true",
+        help="Режим тестирования: --repo это путь к файлу",
+    )
+    parser.add_argument(
+        "--ascii", action="store_true",
+        help="Вывод зависимостей в виде ASCII-дерева",
+    )
+    parser.add_argument(
+        "--filter", default="",
+        help="Подстрока: пакеты с ней в имени пропускаются",
+    )
+    parser.add_argument(
+        "--reverse", action="store_true",
+        help="Показать обратные зависимости",
+    )
+    parser.add_argument(
+        "--output", default="graph",
+        help="Имя файлов для графа (без расширения)",
+    )
     return parser.parse_args()
 
 
@@ -62,6 +78,21 @@ def parse_index(text):
     return packages
 
 
+def parse_versions(text):
+    versions = {}
+    for block in text.strip().split("\n\n"):
+        name = None
+        version = None
+        for line in block.splitlines():
+            if line.startswith("P:"):
+                name = line[2:]
+            elif line.startswith("V:"):
+                version = line[2:]
+        if name and version and name not in versions:
+            versions[name] = version
+    return versions
+
+
 def load_test_graph(path):
     graph = {}
     with open(path, encoding="utf-8") as file:
@@ -74,21 +105,33 @@ def load_test_graph(path):
     return graph
 
 
-def clean_dep(item):
+def split_dep(item):
+    """Делит 'libcurl>=8.0' на имя и условие (('>=', '8.0'))."""
     if item.startswith("!") or ":" in item:
-        return None
-    for sign in ("<", ">", "=", "~"):
-        item = item.split(sign)[0]
-    return item
+        return "", ("", "")
+    for op in OPERATORS:
+        if op in item:
+            name, ver = item.split(op, 1)
+            return name, (op, ver)
+    return item, ("", "")
 
 
 def get_direct_deps(graph, name, substring):
     result = []
     for item in graph.get(name, []):
-        dep = clean_dep(item)
-        if dep and (not substring or substring not in dep):
-            result.append(dep)
+        dep, cond = split_dep(item)
+        if not dep or (substring and substring in dep):
+            continue
+        result.append((dep, cond))
     return result
+
+
+def collect_conds(graph, substring):
+    conds = {}
+    for name in graph:
+        for dep, cond in get_direct_deps(graph, name, substring):
+            conds[(name, dep)] = cond
+    return conds
 
 
 def build_full_graph(graph, start, substring):
@@ -99,7 +142,7 @@ def build_full_graph(graph, start, substring):
         name = stack.pop()
         if name in full:
             continue
-        deps = get_direct_deps(graph, name, substring)
+        deps = [dep for dep, _ in get_direct_deps(graph, name, substring)]
         full[name] = deps
         for dep in deps:
             if dep not in full:
@@ -108,59 +151,94 @@ def build_full_graph(graph, start, substring):
 
 
 def build_reverse(graph, substring):
-    """Строит обратный граф: для каждого пакета список тех, кто от него зависит."""
+    """Обратный граф: от пакета к тем, кто от него зависит."""
     reverse = {}
     for name in graph:
-        if substring and substring in name:
-            continue
         reverse.setdefault(name, [])
-    for name in graph:
-        if substring and substring in name:
-            continue
-        for dep in get_direct_deps(graph, name, substring):
+        for dep, _ in get_direct_deps(graph, name, substring):
             reverse.setdefault(dep, []).append(name)
     return reverse
 
 
-def print_list(full, start, reverse):
-    if reverse:
+OPERATOR_SIGNS = {
+    "=": "=",
+    ">": ">",
+    "<": "<",
+    ">=": ">=",
+    "<=": "<=",
+    "~": "~",
+}
+
+
+def edge_text(info, parent, child):
+    if info["reverse"]:
+        key = (child, parent)
+    else:
+        key = (parent, child)
+    op, ver = info["conds"].get(key, ("", ""))
+    if not op:
+        return " (нет условия)"
+    return f" {OPERATOR_SIGNS.get(op, op)} {ver}"
+
+
+def node_text(name, parent, info):
+    text = name
+    if parent is not None:
+        text += edge_text(info, parent, name)
+    version = info["versions"].get(name)
+    if version:
+        text += f" ({version})"
+    return text
+
+
+def print_list(full, start, info):
+    if info["reverse"]:
         print(f"Обратные зависимости пакета {start}:")
     else:
         print(f"Все зависимости пакета {start}:")
     for name in sorted(full):
         print(name)
         for dep in full[name]:
-            print(f"  -> {dep}")
+            print(f"  -> {dep}{edge_text(info, name, dep)}")
 
 
-def print_ascii(full, start):
-    """Вывод дерева без рекурсии. Уже раскрытые пакеты не повторяются."""
-    print(start)
+def print_ascii(full, start, info):
+    """Дерево без рекурсии. Уже раскрытые пакеты не повторяются."""
+    print(node_text(start, None, info))
     expanded = set()
-    stack = [(start, "", True, True)]
+    stack = [(start, "", True, True, None)]
     while stack:
-        name, prefix, is_last, is_root = stack.pop()
+        name, prefix, is_last, is_root, parent = stack.pop()
         if not is_root:
             connector = "└── " if is_last else "├── "
+            text = node_text(name, parent, info)
             if name in expanded:
-                print(prefix + connector + name + " (уже выведен)")
+                print(prefix + connector + text + " (уже выведен)")
                 continue
-            print(prefix + connector + name)
+            print(prefix + connector + text)
         expanded.add(name)
-        child_prefix = prefix if is_root else prefix + ("    " if is_last else "│   ")
+        if is_root:
+            child_prefix = prefix
+        else:
+            child_prefix = prefix + ("    " if is_last else "│   ")
         children = full.get(name, [])
         for index in reversed(range(len(children))):
+            child = children[index]
             is_child_last = index == len(children) - 1
-            stack.append((children[index], child_prefix, is_child_last, False))
+            stack.append((child, child_prefix, is_child_last, False, name))
 
 
-def to_d2(full):
+def to_d2(full, info):
     lines = []
     for name in sorted(full):
-        lines.append(f'"{name}"')
+        lines.append(f'"{name}": "{node_text(name, None, info)}"')
     for name in sorted(full):
         for dep in full[name]:
-            lines.append(f'"{name}" -> "{dep}"')
+            label = edge_text(info, name, dep).strip()
+            line = f'"{name}" -> "{dep}"'
+            if label:
+                line += f': "{label}"'
+            lines.append(line)
     return "\n".join(lines) + "\n"
 
 
@@ -168,10 +246,10 @@ def render_svg(d2_path, svg_path):
     try:
         subprocess.run(["d2", d2_path, svg_path], check=True)
     except FileNotFoundError:
-        print("Ошибка: программа d2 не найдена, проверьте установку", file=sys.stderr)
+        print("Ошибка: программа d2 не найдена", file=sys.stderr)
         sys.exit(1)
     except subprocess.CalledProcessError:
-        print("Ошибка: d2 не смогла построить изображение", file=sys.stderr)
+        print("Ошибка: d2 не построила изображение", file=sys.stderr)
         sys.exit(1)
     print(f"Изображение сохранено: {svg_path}")
     if os.name == "nt":
@@ -185,32 +263,36 @@ def main():
         print(f"Ошибка: {error}", file=sys.stderr)
         sys.exit(1)
 
+    versions = {}
     if args.test:
         graph = load_test_graph(args.repo)
     else:
         text = download_index(args.repo)
         graph = parse_index(text)
+        versions = parse_versions(text)
 
     if args.package not in graph:
         print(f"Ошибка: пакет не найден: {args.package}", file=sys.stderr)
         sys.exit(1)
 
-    if args.reverse:
-        source = build_reverse(graph, args.filter)
-    else:
-        source = graph
+    if not args.test:
+        version = versions.get(args.package, "неизвестна")
+        print(f"Версия пакета {args.package}: {version}")
 
+    conds = collect_conds(graph, args.filter)
+    info = {"versions": versions, "conds": conds, "reverse": args.reverse}
+    source = build_reverse(graph, args.filter) if args.reverse else graph
     full = build_full_graph(source, args.package, args.filter)
-    print_list(full, args.package, args.reverse)
+    print_list(full, args.package, info)
 
     if args.ascii:
         print()
-        print_ascii(full, args.package)
+        print_ascii(full, args.package, info)
 
     d2_path = args.output + ".d2"
     svg_path = args.output + ".svg"
     with open(d2_path, "w", encoding="utf-8") as file:
-        file.write(to_d2(full))
+        file.write(to_d2(full, info))
     render_svg(d2_path, svg_path)
 
 
